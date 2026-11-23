@@ -234,12 +234,12 @@ function nextKey() {
   return `q${q}`;
 }
 
-export function buildMeaningQuestion(item: VocabItem, deck: VocabItem[], reverse = false): Question {
+export function buildMeaningQuestion(item: VocabItem, deck: VocabItem[], reverse = false, choiceCount = 4): Question {
   const correct = reverse ? item.word : item.translation;
   const pool = deck
     .filter((other) => other.id !== item.id)
     .map((other) => (reverse ? other.word : other.translation));
-  const choices = shuffle(pickN(correct, pool, reverse ? DECOY_EN : DECOY_ES, 3));
+  const choices = shuffle(pickN(correct, pool, reverse ? DECOY_EN : DECOY_ES, choiceCount));
   return {
     key: nextKey(),
     kind: reverse ? "reverse" : "meaning",
@@ -273,26 +273,40 @@ export function buildClozeQuestion(item: VocabItem, deck: VocabItem[], choiceCou
 }
 
 export function buildBossQuestion(item: VocabItem, deck: VocabItem[], round: number): Question {
-  if (round >= 7) return buildClozeQuestion(item, deck, 3);
-  if (round >= 3) return buildMeaningQuestion(item, deck, true);
-  return buildMeaningQuestion(item, deck, false);
+  if (round >= 3) return buildClozeQuestion(item, deck, 4);
+  return buildMeaningQuestion(item, deck, round % 2 === 1, 4);
 }
 
 export function bossSeconds(round: number) {
-  return Math.max(5, 10 - round * 0.45);
+  return Math.max(4.2, 7.5 - round * 0.32);
 }
 
 export function comboMultiplier(combo: number) {
-  return 1 + Math.max(0, combo - 1) * 0.25;
+  return 1 + Math.max(0, combo - 1) * 0.15;
 }
 
 export function dashAward(comboAfterHit: number, ms: number) {
-  const speed = ms < 1400 ? 40 : ms < 2800 ? 20 : 0;
-  return Math.round(100 * comboMultiplier(comboAfterHit) + speed);
+  const speed = ms < 900 ? 22 : ms < 1600 ? 10 : 0;
+  return Math.round(58 * comboMultiplier(comboAfterHit) + speed);
 }
 
-export const DASH_PENALTY = 40;
-export const DASH_SECONDS = 45;
+export const DASH_PENALTY = 75;
+export const DASH_SECONDS = 30;
+
+export function foldAnswer(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9ñ ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function answersMatch(typed: string, expected: string) {
+  const goal = foldAnswer(expected);
+  return goal.length > 0 && foldAnswer(typed) === goal;
+}
 
 export function pullItem(deck: VocabItem[], bag: VocabItem[], lastWord: string) {
   if (bag.length === 0) {
@@ -312,7 +326,7 @@ export function choiceLabel(choice: string, capitalize: boolean) {
 }
 
 export function xpForScore(score: number) {
-  return Math.min(400, Math.max(6, Math.round(score / 15)));
+  return Math.min(160, Math.max(4, Math.round(score / 26)));
 }
 
 export function settleRun(prev: SaveData, run: RunStats): { meta: SaveData; xpGain: number; newBadges: string[] } {
@@ -331,8 +345,8 @@ export function settleRun(prev: SaveData, run: RunStats): { meta: SaveData; xpGa
   };
   grant("first-bloom");
   if (run.bestCombo >= 5) grant("streak-5");
-  if (run.mode === "dash" && run.wrong === 0 && run.correct >= 5) grant("perfect-dash");
-  if (run.mode === "match" && run.wrong === 0 && run.win) grant("match-clean");
+  if (run.mode === "dash" && run.wrong === 0 && run.correct >= 6) grant("perfect-dash");
+  if (run.mode === "thorn" && run.wrong === 0 && run.win) grant("match-clean");
   if (run.mode === "boss" && run.win) grant("boss");
   if (run.mode === "class" && run.win) grant("class-champ");
   if (mastered.length >= 10) grant("wordsmith");

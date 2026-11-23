@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { emptySave } from "./save.ts";
 import {
+  answersMatch,
   buildClozeQuestion,
   buildMeaningQuestion,
   deckReady,
@@ -59,9 +60,9 @@ test("meaning questions keep one correct choice among three unique options", () 
   const deck = defaultDeck();
   for (let i = 0; i < 20; i++) {
     const question = buildMeaningQuestion(deck[i % deck.length]!, deck);
-    assert.equal(question.choices.length, 3);
+    assert.equal(question.choices.length, 4);
     assert.ok(question.choices.includes(question.answer));
-    assert.equal(new Set(question.choices.map((choice) => choice.toLowerCase())).size, 3);
+    assert.equal(new Set(question.choices.map((choice) => choice.toLowerCase())).size, 4);
     const cloze = buildClozeQuestion(deck[i % deck.length]!, deck, 4);
     assert.equal(cloze.choices.length, 4);
     assert.ok(cloze.choices.includes(cloze.answer));
@@ -85,6 +86,11 @@ test("levels, deck limits and rewards", () => {
     detail: "d",
   });
   assert.ok(settled.xpGain > 0);
+  assert.ok(settled.xpGain <= 160);
+  assert.equal(answersMatch("Yo mismo", "yo mismo"), true);
+  assert.equal(answersMatch("felicidad", "felicidad"), true);
+  assert.equal(answersMatch("feliz", "felicidad"), false);
+  assert.equal(answersMatch("  corazón ", "corazon"), true);
   assert.ok(settled.newBadges.includes("first-bloom"));
   assert.ok(settled.newBadges.includes("streak-5"));
   assert.ok(settled.newBadges.includes("perfect-dash"));

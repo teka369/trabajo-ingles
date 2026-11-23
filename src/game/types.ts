@@ -12,7 +12,7 @@ export type VocabItem = {
   fromGarden: boolean;
 };
 
-export type ModeId = "dash" | "match" | "sentence" | "boss" | "class";
+export type ModeId = "dash" | "thorn" | "sentence" | "boss" | "class";
 
 export type RunStats = {
   mode: ModeId;

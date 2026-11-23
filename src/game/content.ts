@@ -111,7 +111,7 @@ export const BADGES: Badge[] = [
   { id: "first-bloom", name: "Primer brote", desc: "Terminaste tu primera partida." },
   { id: "streak-5", name: "Racha de cinco", desc: "Cinco aciertos seguidos." },
   { id: "perfect-dash", name: "Relámpago", desc: "Word Dash sin errores." },
-  { id: "match-clean", name: "Jardín exacto", desc: "Bloom Match sin fallos." },
+  { id: "match-clean", name: "Raíz firme", desc: "Thorn Recall sin un fallo." },
   { id: "boss", name: "Domador del Marchito", desc: "Venciste a The Bloom Boss." },
   { id: "class-champ", name: "Aula en flor", desc: "Cerraste una ronda de Classroom Mode." },
   { id: "wordsmith", name: "Sembrador", desc: "Dominaste 10 palabras." },

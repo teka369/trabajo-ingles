@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Flower2, Leaf, Sparkles, Trophy } from "lucide-react";
+import { Leaf, Sparkles, Trophy } from "lucide-react";
 import { audio } from "@/game/audio";
 import {
   DASH_PENALTY,
   DASH_SECONDS,
+  answersMatch,
   bossSeconds,
   buildBossQuestion,
   buildClozeQuestion,
@@ -11,6 +12,7 @@ import {
   choiceLabel,
   comboMultiplier,
   dashAward,
+  displayWord,
   pullItem,
   shuffle,
 } from "@/game/engine";
@@ -71,7 +73,7 @@ export function WordDash({ deck, paused, onFinish }: ModeProps) {
       correct: correctRef.current,
       wrong: wrongRef.current,
       bestCombo: bestRef.current,
-      win: correctRef.current >= 5,
+      win: correctRef.current >= 6 && wrongRef.current <= 2,
       words: wordsRef.current,
       title: correctRef.current >= 8 ? "El jardín despierta" : "Sprint cerrado",
       detail: `${correctRef.current} aciertos · ${wrongRef.current} fallos · racha ${bestRef.current}`,
@@ -86,7 +88,7 @@ export function WordDash({ deck, paused, onFinish }: ModeProps) {
     setPicked(null);
     setNote("");
     setPop(null);
-    setQuestion(buildMeaningQuestion(item, deck));
+    setQuestion(buildMeaningQuestion(item, deck, Math.random() < 0.6, 4));
   };
 
   useEffect(() => {
@@ -168,7 +170,7 @@ export function WordDash({ deck, paused, onFinish }: ModeProps) {
       <div className="flex items-end justify-between gap-3">
         <div>
           <p className="text-xs tracking-widest text-gold uppercase">Word Dash</p>
-          <p className="text-sm text-muted">Teclas 1, 2 y 3. La racha multiplica.</p>
+          <p className="text-sm text-muted">Teclas 1 a 4. Inglés y español se mezclan. Un fallo duele.</p>
         </div>
         <p data-testid="score" className="font-display text-4xl text-fg">
           {score}
@@ -207,173 +209,202 @@ export function WordDash({ deck, paused, onFinish }: ModeProps) {
   );
 }
 
-export function BloomMatch({ deck, paused, onFinish }: ModeProps) {
-  const [pairs] = useState(() =>
+const THORN_SECONDS = 7.5;
+
+export function ThornRecall({ deck, paused, onFinish }: ModeProps) {
+  const [rounds] = useState(() =>
     shuffle(deck)
-      .slice(0, Math.min(6, deck.length))
-      .map((item) => ({ id: item.id, en: item.word, es: item.translation })),
+      .slice(0, Math.min(8, deck.length))
+      .map((item, index) => ({ item, reverse: index % 2 === 1 })),
   );
-  const [english] = useState(() => shuffle(pairs));
-  const [spanish] = useState(() => shuffle(pairs));
-  const [selected, setSelected] = useState<{ side: "en" | "es"; id: string } | null>(null);
-  const [matched, setMatched] = useState<string[]>([]);
-  const [wrongId, setWrongId] = useState<string | null>(null);
+  const [index, setIndex] = useState(0);
+  const [draft, setDraft] = useState("");
+  const [lives, setLives] = useState(3);
   const [score, setScore] = useState(0);
+  const [combo, setCombo] = useState(0);
+  const [bestCombo, setBestCombo] = useState(0);
+  const [correct, setCorrect] = useState(0);
   const [wrong, setWrong] = useState(0);
+  const [note, setNote] = useState("");
   const [pop, setPop] = useState<string | null>(null);
+  const [lockedView, setLockedView] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   const lock = useRef(false);
-  const elapsed = useRef(0);
+  const shownAt = useRef(performance.now());
+  const wordsRef = useRef<string[]>([]);
+  const barRef = useRef<HTMLDivElement>(null);
   const labelRef = useRef<HTMLSpanElement>(null);
-  const lastHit = useRef(performance.now());
+  const remainRef = useRef(THORN_SECONDS);
   const done = useRef(false);
-  const scoreRef = useRef(0);
-  const wrongRef = useRef(0);
+  const round = rounds[index];
 
-  useEffect(() => {
-    if (paused || done.current) return;
-    const origin = performance.now() - elapsed.current * 1000;
-    let raf = 0;
-    const tick = (now: number) => {
-      elapsed.current = (now - origin) / 1000;
-      if (labelRef.current) labelRef.current.textContent = `${Math.floor(elapsed.current / 60)}:${Math.floor(elapsed.current % 60).toString().padStart(2, "0")}`;
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [paused]);
-
-  const finish = (nextScore: number, misses: number) => {
+  const finish = (stats: { score: number; correct: number; wrong: number; bestCombo: number; win: boolean; words: string[] }) => {
     if (done.current) return;
     done.current = true;
-    const bonus = Math.max(0, 640 - Math.round(elapsed.current * 8));
-    const total = nextScore + bonus;
     onFinish({
-      mode: "match",
-      score: total,
-      correct: pairs.length,
-      wrong: misses,
-      bestCombo: misses === 0 ? pairs.length : 1,
-      win: true,
-      words: pairs.map((pair) => pair.en),
-      title: "El jardín hizo match",
-      detail: `${pairs.length} parejas · bonus de tiempo +${bonus}`,
+      mode: "thorn",
+      title: stats.win ? "La raíz aguantó" : "La espina se cerró",
+      detail: stats.win ? `${stats.correct} de ${rounds.length} · ${stats.wrong} fallos` : `${stats.correct} aciertos antes de quedarte sin pétalos`,
+      ...stats,
     });
   };
 
-  const choose = (side: "en" | "es", id: string) => {
-    if (paused || lock.current || matched.includes(id)) return;
-    if (!selected) {
-      setSelected({ side, id });
-      return;
-    }
-    if (selected.side === side) {
-      setSelected({ side, id });
-      return;
-    }
-    if (selected.id === id) {
-      const gain = 160 + (performance.now() - lastHit.current < 3500 ? 40 : 0);
-      const next = score + gain;
-      scoreRef.current = next;
-      lastHit.current = performance.now();
-      const nextMatched = [...matched, id];
-      setMatched(nextMatched);
-      setScore(next);
-      setSelected(null);
+  useEffect(() => {
+    lock.current = false;
+    shownAt.current = performance.now();
+    setDraft("");
+    setLockedView(false);
+    setPop(null);
+    const focus = window.setTimeout(() => inputRef.current?.focus(), 40);
+    return () => window.clearTimeout(focus);
+  }, [index]);
+
+  const settle = (typed: string, fromTimer = false) => {
+    if (!round || lock.current || paused || done.current) return;
+    if (!fromTimer && typed.trim().length === 0) return;
+    lock.current = true;
+    setLockedView(true);
+    const expected = round.reverse ? round.item.word : round.item.translation;
+    const hit = answersMatch(typed, expected);
+    const shown = round.reverse ? `«${displayWord(round.item.word)}»` : `«${round.item.translation}»`;
+    const goNext = (next: { score: number; correct: number; wrong: number; bestCombo: number; lives: number; words: string[] }) => {
+      const until = performance.now() + 780;
+      const step = (now: number) => {
+        if (now < until) {
+          requestAnimationFrame(step);
+          return;
+        }
+        if (next.lives <= 0) {
+          finish({ ...next, win: false });
+          return;
+        }
+        if (index + 1 >= rounds.length) {
+          finish({ ...next, win: true });
+          return;
+        }
+        setLives(next.lives);
+        setIndex(index + 1);
+      };
+      requestAnimationFrame(step);
+    };
+    if (hit) {
+      const nextCombo = combo + 1;
+      const nextBest = Math.max(bestCombo, nextCombo);
+      const ms = performance.now() - shownAt.current;
+      const speed = ms < 2200 ? 16 : ms < 4000 ? 8 : 0;
+      const gain = Math.round(68 * comboMultiplier(nextCombo) + speed);
+      const nextScore = score + gain;
+      const nextCorrect = correct + 1;
+      const words = [...wordsRef.current, round.item.word];
+      wordsRef.current = words;
+      setScore(nextScore);
+      setCombo(nextCombo);
+      setBestCombo(nextBest);
+      setCorrect(nextCorrect);
       setPop(`+${gain}`);
-      audio.sfx("bloom");
-      juice.emit("bloom");
-      if (nextMatched.length === pairs.length) finish(next, wrongRef.current);
+      setNote(`Sí. ${shown}.`);
+      audio.sfx(nextCombo >= 3 ? "combo" : "ok");
+      juice.emit("ok");
+      goNext({ score: nextScore, correct: nextCorrect, wrong, bestCombo: nextBest, lives, words });
       return;
     }
-    const miss = wrong + 1;
-    const next = Math.max(0, score - 20);
-    wrongRef.current = miss;
-    scoreRef.current = next;
-    setWrong(miss);
-    setScore(next);
-    setWrongId(id);
-    setPop("-20");
+    const nextWrong = wrong + 1;
+    const nextLives = lives - 1;
+    const nextScore = Math.max(0, score - 40);
+    setWrong(nextWrong);
+    setLives(nextLives);
+    setScore(nextScore);
+    setCombo(0);
+    setPop("-40");
+    setNote(`Era ${shown}.`);
     audio.sfx("bad");
     juice.emit("bad");
-    lock.current = true;
-    const until = performance.now() + 520;
-    const step = (now: number) => {
-      if (now < until) {
-        requestAnimationFrame(step);
-        return;
-      }
-      lock.current = false;
-      setSelected(null);
-      setWrongId(null);
-    };
-    requestAnimationFrame(step);
+    goNext({ score: nextScore, correct, wrong: nextWrong, bestCombo, lives: nextLives, words: wordsRef.current });
   };
 
+  useRailTimer({
+    total: THORN_SECONDS,
+    active: !paused && !lockedView && round !== undefined,
+    resetKey: `thorn-${index}`,
+    remainRef,
+    barRef,
+    labelRef,
+    onEnd: () => settle("", true),
+  });
+
+  if (!round) return null;
+  const prompt = round.reverse ? round.item.translation : displayWord(round.item.word);
+
   return (
-    <section className="enter relative mx-auto flex w-full max-w-3xl flex-col gap-4">
-      <div className="flex items-end justify-between">
+    <section className="enter relative mx-auto flex w-full max-w-xl flex-col gap-4">
+      <div className="flex items-end justify-between gap-3">
         <div>
-          <p className="text-xs tracking-widest text-gold uppercase">Bloom Match</p>
-          <p className="text-sm text-muted">Toca una palabra y luego su traducción.</p>
-        </div>
-        <div className="text-right">
-          <p data-testid="score" className="font-display text-4xl">
-            {score}
+          <p className="text-xs tracking-widest text-gold uppercase">Thorn Recall</p>
+          <p className="text-sm text-muted">
+            {index + 1} / {rounds.length} · escríbela. Las tildes no cuentan.
           </p>
-          <span ref={labelRef} data-testid="timer" className="block text-sm text-muted">
-            0:00
-          </span>
         </div>
+        <p data-testid="score" className="font-display text-4xl">
+          {score}
+        </p>
       </div>
-      <p className="text-sm text-jade">
-        {matched.length} / {pairs.length} flores
-      </p>
-      <div className="relative grid gap-3 sm:grid-cols-2">
+      <div className="h-2 overflow-hidden rounded-full bg-surface">
+        <div ref={barRef} className="timer-fill h-full w-full" />
+      </div>
+      <div className="flex items-center justify-between text-sm text-muted">
+        <span className="flex gap-1" aria-label={`${lives} pétalos`}>
+          {[0, 1, 2].map((life) => (
+            <Leaf key={life} className={cn("size-5", life < lives ? "text-gold" : "text-line")} aria-hidden="true" />
+          ))}
+        </span>
+        <span ref={labelRef} data-testid="timer">
+          {Math.ceil(THORN_SECONDS)}
+        </span>
+      </div>
+      <div className="panel relative rounded-card px-4 py-8 text-center">
         <PopScore text={pop} />
-        {[
-          { side: "en" as const, rows: english, field: "en" as const },
-          { side: "es" as const, rows: spanish, field: "es" as const },
-        ].map((column) => (
-          <div key={column.side} className="grid gap-2">
-            {column.rows.map((pair) => {
-              const isMatched = matched.includes(pair.id);
-              const isSelected = selected?.side === column.side && selected.id === pair.id;
-              const isWrong = wrongId === pair.id && selected?.id !== pair.id;
-              return (
-                <button
-                  key={`${column.side}-${pair.id}`}
-                  type="button"
-                  disabled={isMatched}
-                  onClick={() => choose(column.side, pair.id)}
-                  className={cn(
-                    "min-h-14 rounded-card border px-3 py-3 text-base font-semibold capitalize transition-[transform,border-color,background-color] duration-150 active:scale-[0.96] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gold",
-                    isMatched && "border-gold bg-gold/20 text-gold",
-                    isSelected && !isMatched && "border-gold bg-surface text-fg",
-                    isWrong && "border-blossom bg-blossom/15",
-                    !isMatched && !isSelected && !isWrong && "border-line bg-bg/75 text-fg hover:border-gold",
-                  )}
-                >
-                  <span className="flex items-center justify-center gap-2">
-                    {isMatched ? <Flower2 className="size-4" aria-hidden="true" /> : null}
-                    {pair[column.field]}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        ))}
+        <p className="text-sm text-gold">{round.reverse ? "Escribe la palabra en inglés" : "Escribe la traducción"}</p>
+        <p data-testid="prompt" className="glow-title mt-2 font-display text-5xl text-fg sm:text-6xl">
+          {prompt}
+        </p>
       </div>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          settle(draft);
+        }}
+      >
+        <input
+          ref={inputRef}
+          data-testid="thorn-input"
+          value={draft}
+          disabled={lockedView || paused}
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          aria-label={round.reverse ? "Palabra en inglés" : "Traducción"}
+          placeholder={round.reverse ? "palabra en inglés" : "traducción"}
+          onChange={(event) => setDraft(event.target.value.slice(0, 48))}
+          className="panel-solid min-h-14 w-full rounded-card px-4 text-center font-display text-2xl text-fg outline-none focus-visible:outline-2 focus-visible:outline-gold"
+        />
+        <GameButton className="mt-3 w-full" type="submit" disabled={lockedView || paused || draft.trim().length === 0}>
+          Sembrar
+        </GameButton>
+      </form>
+      <p className="min-h-6 text-center text-sm text-muted" aria-live="polite">
+        {note}
+      </p>
     </section>
   );
 }
 
+const SENTENCE_SECONDS = 11;
+
 export function SentenceBuilder({ deck, paused, onFinish }: ModeProps) {
-  const [queue] = useState(() => shuffle(deck).slice(0, Math.min(6, deck.length)));
+  const [queue] = useState(() => shuffle(deck).slice(0, Math.min(8, deck.length)));
   const [index, setIndex] = useState(0);
   const [question, setQuestion] = useState<Question | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
-  const [dead, setDead] = useState<string[]>([]);
-  const [hintOn, setHintOn] = useState(false);
   const [score, setScore] = useState(0);
   const [combo, setCombo] = useState(0);
   const [bestCombo, setBestCombo] = useState(0);
@@ -384,6 +415,9 @@ export function SentenceBuilder({ deck, paused, onFinish }: ModeProps) {
   const shownAt = useRef(0);
   const wordsRef = useRef<string[]>([]);
   const lock = useRef(false);
+  const barRef = useRef<HTMLDivElement>(null);
+  const labelRef = useRef<HTMLSpanElement>(null);
+  const remainRef = useRef(SENTENCE_SECONDS);
 
   useEffect(() => {
     const item = queue[index];
@@ -392,8 +426,6 @@ export function SentenceBuilder({ deck, paused, onFinish }: ModeProps) {
     lock.current = false;
     setQuestion(buildClozeQuestion(item, deck, 4));
     setPicked(null);
-    setDead([]);
-    setHintOn(false);
     setNote("");
     setPop(null);
   }, [deck, index, queue]);
@@ -402,14 +434,14 @@ export function SentenceBuilder({ deck, paused, onFinish }: ModeProps) {
     onFinish({
       mode: "sentence",
       ...stats,
-      win: stats.correct >= Math.ceil(queue.length / 2),
+      win: stats.correct >= Math.ceil(queue.length * 0.75),
       title: "Oraciones en flor",
-      detail: `${stats.correct} de ${queue.length} oraciones completas`,
+      detail: `${stats.correct} de ${queue.length} oraciones, un solo intento`,
     });
   };
 
   const advance = (nextCorrect: number, nextWrong: number, nextScore: number, nextBest: number, words: string[]) => {
-    const until = performance.now() + 900;
+    const until = performance.now() + 800;
     const step = (now: number) => {
       if (now < until) {
         requestAnimationFrame(step);
@@ -430,48 +462,59 @@ export function SentenceBuilder({ deck, paused, onFinish }: ModeProps) {
     requestAnimationFrame(step);
   };
 
-  const answer = (choice: string) => {
-    if (!question || lock.current || paused || dead.includes(choice)) return;
-    const hit = choice.toLowerCase() === question.answer.toLowerCase();
-    if (hit) {
-      lock.current = true;
-      const fast = performance.now() - shownAt.current < 8000;
-      const gain = (dead.length > 0 ? 90 : 180) + (fast && dead.length === 0 ? 30 : 0);
-      const nextCombo = combo + 1;
-      const nextBest = Math.max(bestCombo, nextCombo);
-      const nextScore = score + gain;
-      const nextCorrect = correct + 1;
-      const words = [...wordsRef.current, question.word];
-      wordsRef.current = words;
-      setPicked(choice);
-      setScore(nextScore);
-      setCombo(nextCombo);
-      setBestCombo(nextBest);
-      setCorrect(nextCorrect);
-      setPop(`+${gain}`);
-      setNote(question.explain);
-      audio.sfx(nextCombo >= 3 ? "combo" : "ok");
-      juice.emit("ok");
-      advance(nextCorrect, wrong, nextScore, nextBest, words);
-      return;
-    }
+  const miss = (choice: string | null, reason: string) => {
+    if (!question || lock.current || paused) return;
+    lock.current = true;
+    const nextWrong = wrong + 1;
+    const nextScore = Math.max(0, score - 55);
+    setPicked(choice ?? "__timeout__");
+    setWrong(nextWrong);
+    setScore(nextScore);
+    setCombo(0);
+    setPop("-55");
+    setNote(reason);
     audio.sfx("bad");
     juice.emit("bad");
-    setCombo(0);
-    if (dead.length === 0) {
-      setDead([choice]);
-      setHintOn(true);
-      setNote("Pista lista. Te queda un intento.");
-      setWrong(wrong + 1);
+    advance(correct, nextWrong, nextScore, bestCombo, wordsRef.current);
+  };
+
+  const answer = (choice: string) => {
+    if (!question || lock.current || paused || picked) return;
+    const hit = choice.toLowerCase() === question.answer.toLowerCase();
+    if (!hit) {
+      miss(choice, question.explain);
       return;
     }
     lock.current = true;
-    const nextWrong = wrong + 1;
+    const nextCombo = combo + 1;
+    const nextBest = Math.max(bestCombo, nextCombo);
+    const fast = performance.now() - shownAt.current < 4500;
+    const gain = Math.round((fast ? 92 : 74) * comboMultiplier(nextCombo));
+    const nextScore = score + gain;
+    const nextCorrect = correct + 1;
+    const words = [...wordsRef.current, question.word];
+    wordsRef.current = words;
     setPicked(choice);
-    setWrong(nextWrong);
+    setScore(nextScore);
+    setCombo(nextCombo);
+    setBestCombo(nextBest);
+    setCorrect(nextCorrect);
+    setPop(`+${gain}`);
     setNote(question.explain);
-    advance(correct, nextWrong, score, bestCombo, wordsRef.current);
+    audio.sfx(nextCombo >= 3 ? "combo" : "ok");
+    juice.emit("ok");
+    advance(nextCorrect, wrong, nextScore, nextBest, words);
   };
+
+  useRailTimer({
+    total: SENTENCE_SECONDS,
+    active: !paused && question !== null && picked === null,
+    resetKey: question?.key ?? `sentence-${index}`,
+    remainRef,
+    barRef,
+    labelRef,
+    onEnd: () => miss(null, "Se acabó el tiempo. " + (question?.explain ?? "")),
+  });
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -493,24 +536,30 @@ export function SentenceBuilder({ deck, paused, onFinish }: ModeProps) {
         <div>
           <p className="text-xs tracking-widest text-gold uppercase">Sentence Builder</p>
           <p className="text-sm text-muted">
-            {index + 1} / {queue.length} · teclas 1 a 4
+            {index + 1} / {queue.length} · un intento · teclas 1 a 4
           </p>
         </div>
         <p data-testid="score" className="font-display text-4xl">
           {score}
         </p>
       </div>
+      <div className="h-2 overflow-hidden rounded-full bg-surface">
+        <div ref={barRef} className="timer-fill h-full w-full" />
+      </div>
+      <div className="flex justify-end text-sm text-muted">
+        <span ref={labelRef} data-testid="timer">
+          {SENTENCE_SECONDS}
+        </span>
+      </div>
       <div className="panel relative rounded-card p-5">
         <PopScore text={pop} />
         <p className="text-sm text-gold">{question.kicker}</p>
         <PromptText text={question.prompt} className="mt-3 font-display text-3xl leading-snug text-fg sm:text-4xl" />
       </div>
-      {hintOn ? <p className="panel rounded-card px-4 py-3 text-sm text-gold">{question.hint}</p> : null}
       <ChoiceList
         choices={question.choices}
         answer={question.answer}
         picked={picked}
-        dead={dead}
         capitalize={question.capitalize}
         onPick={answer}
         renderLabel={(choice) => choiceLabel(choice, question.capitalize)}
@@ -583,19 +632,21 @@ export function BloomBoss({ deck, paused, onFinish }: ModeProps) {
     if (done.current || lock.current) return;
     lock.current = true;
     const nextLives = lives - 1;
-    const nextHp = Math.min(100, hp + 8);
+    const nextHp = Math.min(100, hp + 14);
     const nextWrong = wrong + 1;
+    const nextScore = Math.max(0, score - 50);
     setLives(nextLives);
     setHp(nextHp);
+    setScore(nextScore);
     setCombo(0);
     setWrong(nextWrong);
     setNote(reason);
-    setPop("resiste");
+    setPop("-50");
     audio.sfx("bad");
     juice.emit("bad");
     if (nextLives <= 0) {
       end({
-        score,
+        score: nextScore,
         correct,
         wrong: nextWrong,
         bestCombo,
@@ -614,7 +665,7 @@ export function BloomBoss({ deck, paused, onFinish }: ModeProps) {
       const nextRound = round + 1;
       if (nextRound >= 10) {
         end({
-          score,
+          score: nextScore,
           correct,
           wrong: nextWrong,
           bestCombo,
@@ -654,8 +705,8 @@ export function BloomBoss({ deck, paused, onFinish }: ModeProps) {
     setPicked(choice);
     const nextCombo = combo + 1;
     const nextBest = Math.max(bestCombo, nextCombo);
-    const gain = Math.round(130 * comboMultiplier(nextCombo));
-    const damage = Math.round(11 * comboMultiplier(nextCombo));
+    const gain = Math.round(64 * comboMultiplier(nextCombo));
+    const damage = 7 + nextCombo;
     const nextHp = Math.max(0, hp - damage);
     const nextScore = score + gain;
     const nextCorrect = correct + 1;
@@ -832,7 +883,7 @@ export function ClassSetup({ onStart }: { onStart: (config: ClassConfig) => void
           ))}
         </div>
         <GameButton variant={timed ? "primary" : "quiet"} onClick={() => setTimed((value) => !value)}>
-          {timed ? "Con reloj de 12s" : "Sin reloj"}
+          {timed ? "Con reloj de 10s" : "Sin reloj"}
         </GameButton>
         <GameButton
           data-testid="class-start"
@@ -882,7 +933,7 @@ export function ClassPlay({
   const settled = useRef(false);
   const barRef = useRef<HTMLDivElement>(null);
   const labelRef = useRef<HTMLSpanElement>(null);
-  const remainRef = useRef(12);
+  const remainRef = useRef(10);
   const correctRef = useRef(0);
   const wrongRef = useRef(0);
   const bestComboRef = useRef(0);
@@ -892,7 +943,7 @@ export function ClassPlay({
     lastWord.current = item.word;
     lock.current = false;
     setPicked(null);
-    setQuestion(index % 3 === 2 ? buildClozeQuestion(item, deck, 3) : buildMeaningQuestion(item, deck, index % 3 === 1));
+    setQuestion(index % 3 === 2 ? buildClozeQuestion(item, deck, 4) : buildMeaningQuestion(item, deck, index % 2 === 1, 4));
   };
 
   useEffect(() => {
@@ -928,8 +979,8 @@ export function ClassPlay({
       if (!hit) return { ...team, combo: 0 };
       const nextCombo = team.combo + 1;
       bestComboRef.current = Math.max(bestComboRef.current, nextCombo);
-      const speed = config.timed ? Math.round(remainRef.current * 8) : 0;
-      const gain = Math.round((110 + speed) * comboMultiplier(nextCombo));
+      const speed = config.timed ? Math.round(remainRef.current * 3) : 0;
+      const gain = Math.round((62 + speed) * comboMultiplier(nextCombo));
       return { ...team, combo: nextCombo, score: team.score + gain };
     });
     if (hit) {
@@ -964,7 +1015,7 @@ export function ClassPlay({
   };
 
   useRailTimer({
-    total: 12,
+    total: 10,
     active: config.timed && !paused && !over && question !== null && picked === null,
     resetKey: question?.key ?? `class-${index}`,
     remainRef,

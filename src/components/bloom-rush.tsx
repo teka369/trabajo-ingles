@@ -14,9 +14,10 @@ import {
   VolumeX,
   Plus,
   Trash2,
+  Keyboard,
 } from "lucide-react";
 import { Garden } from "@/components/garden";
-import { BloomBoss, BloomMatch, ClassPlay, ClassSetup, SentenceBuilder, WordDash, type ClassConfig } from "@/components/modes";
+import { BloomBoss, ClassPlay, ClassSetup, SentenceBuilder, ThornRecall, WordDash, type ClassConfig } from "@/components/modes";
 import { GameButton, IconButton, Stat } from "@/components/ui";
 import { audio } from "@/game/audio";
 import { BADGES, FLOWERS } from "@/game/content";
@@ -27,7 +28,7 @@ import { emptySave, loadSave, loadSessionBest, writeSave, writeSessionBest } fro
 import type { RunStats, SaveData, VocabItem } from "@/game/types";
 import { cn } from "@/lib/cn";
 
-type Screen = "title" | "vocab" | "hub" | "dash" | "match" | "sentence" | "boss" | "class-setup" | "class-play" | "results";
+type Screen = "title" | "vocab" | "hub" | "dash" | "thorn" | "sentence" | "boss" | "class-setup" | "class-play" | "results";
 
 type ResultView = {
   stats: RunStats;
@@ -37,7 +38,7 @@ type ResultView = {
   levelAfter: number;
 };
 
-const RUNS = new Set<Screen>(["dash", "match", "sentence", "boss", "class-play"]);
+const RUNS = new Set<Screen>(["dash", "thorn", "sentence", "boss", "class-play"]);
 
 export function BloomRush() {
   const [hydrated, setHydrated] = useState(false);
@@ -90,7 +91,9 @@ export function BloomRush() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        if (event.key !== "Escape") return;
+      }
       if (event.key === "m" || event.key === "M") {
         setProgress((current) => ({ ...current, muted: !current.muted }));
       }
@@ -218,8 +221,8 @@ export function BloomRush() {
             />
           ) : screen === "dash" ? (
             <WordDash key={runId} deck={progress.deck} paused={paused} onFinish={finish} />
-          ) : screen === "match" ? (
-            <BloomMatch key={runId} deck={progress.deck} paused={paused} onFinish={finish} />
+          ) : screen === "thorn" ? (
+            <ThornRecall key={runId} deck={progress.deck} paused={paused} onFinish={finish} />
           ) : screen === "sentence" ? (
             <SentenceBuilder key={runId} deck={progress.deck} paused={paused} onFinish={finish} />
           ) : screen === "boss" ? (
@@ -501,15 +504,15 @@ function HubScreen({
   mastered: number;
   best: number;
   sessionBest: number;
-  onMode: (mode: "dash" | "match" | "sentence" | "boss") => void;
+  onMode: (mode: "dash" | "thorn" | "sentence" | "boss") => void;
   onVocab: () => void;
   onClass: () => void;
 }) {
   const modes = [
-    { id: "dash" as const, title: "Word Dash", text: "Significados contra el reloj y combos.", icon: Timer, test: "mode-dash" },
-    { id: "match" as const, title: "Bloom Match", text: "Une cada palabra con su flor en español.", icon: Flower2, test: "mode-match" },
-    { id: "sentence" as const, title: "Sentence Builder", text: "Completa oraciones originales.", icon: Quote, test: "mode-sentence" },
-    { id: "boss" as const, title: "The Bloom Boss", text: "La prueba final contra El Marchito.", icon: Swords, test: "mode-boss" },
+    { id: "dash" as const, title: "Word Dash", text: "Cuatro opciones, inglés y español, 30 segundos.", icon: Timer, test: "mode-dash" },
+    { id: "thorn" as const, title: "Thorn Recall", text: "Escribe la traducción. Sin opciones y con tres vidas.", icon: Keyboard, test: "mode-thorn" },
+    { id: "sentence" as const, title: "Sentence Builder", text: "Un intento por oración y el reloj no perdona.", icon: Quote, test: "mode-sentence" },
+    { id: "boss" as const, title: "The Bloom Boss", text: "Menos daño por golpe. Hay que encadenar aciertos.", icon: Swords, test: "mode-boss" },
   ];
   return (
     <section className="enter mx-auto flex w-full max-w-3xl flex-col gap-4 pb-8">
