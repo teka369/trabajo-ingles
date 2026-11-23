@@ -9,12 +9,14 @@ import {
   buildBossQuestion,
   buildClozeQuestion,
   buildMeaningQuestion,
+  buildScramble,
   choiceLabel,
   comboMultiplier,
   dashAward,
   displayWord,
   pullItem,
   shuffle,
+  type ScrambleWord,
 } from "@/game/engine";
 import { juice } from "@/game/juice";
 import type { Question, RunStats, VocabItem } from "@/game/types";
@@ -832,6 +834,209 @@ export function BloomBoss({ deck, paused, onFinish }: ModeProps) {
   );
 }
 
+function orderSeconds(count: number) {
+  return Math.min(20, Math.max(12, count * 2));
+}
+
+export function PhraseOrder({ deck, paused, onFinish }: ModeProps) {
+  const [rounds] = useState(() => {
+    const built: { word: string; bank: ScrambleWord[]; answer: string; ids: string }[] = [];
+    for (const item of shuffle(deck)) {
+      const scramble = buildScramble(item.example);
+      if (!scramble) continue;
+      built.push({
+        word: item.word,
+        bank: scramble.bank,
+        answer: scramble.answer,
+        ids: scramble.pieces.map((piece) => piece.id).join("|"),
+      });
+      if (built.length === 6) break;
+    }
+    return built;
+  });
+  const [index, setIndex] = useState(0);
+  const [placed, setPlaced] = useState<ScrambleWord[]>([]);
+  const [bank, setBank] = useState<ScrambleWord[]>(() => rounds[0]?.bank ?? []);
+  const [score, setScore] = useState(0);
+  const [combo, setCombo] = useState(0);
+  const [bestCombo, setBestCombo] = useState(0);
+  const [correct, setCorrect] = useState(0);
+  const [wrong, setWrong] = useState(0);
+  const [note, setNote] = useState("");
+  const [pop, setPop] = useState<string | null>(null);
+  const [locked, setLocked] = useState(false);
+  const wordsRef = useRef<string[]>([]);
+  const lock = useRef(false);
+  const barRef = useRef<HTMLDivElement>(null);
+  const labelRef = useRef<HTMLSpanElement>(null);
+  const remainRef = useRef(12);
+  const round = rounds[index];
+  const total = orderSeconds(round ? round.bank.length : 4);
+
+  useEffect(() => {
+    const next = rounds[index];
+    if (!next) return;
+    lock.current = false;
+    setPlaced([]);
+    setBank(next.bank);
+    setLocked(false);
+    setNote("");
+    setPop(null);
+  }, [index, rounds]);
+
+  const finish = (stats: { score: number; correct: number; wrong: number; bestCombo: number; words: string[] }) => {
+    onFinish({
+      mode: "order",
+      ...stats,
+      win: stats.correct >= Math.ceil(rounds.length * 0.75),
+      title: "La frase encontró su sitio",
+      detail: `${stats.correct} de ${rounds.length} frases en orden`,
+    });
+  };
+
+  const advance = (nextCorrect: number, nextWrong: number, nextScore: number, nextBest: number, words: string[]) => {
+    const until = performance.now() + 900;
+    const step = (now: number) => {
+      if (now < until) {
+        requestAnimationFrame(step);
+        return;
+      }
+      if (index + 1 >= rounds.length) {
+        finish({ score: nextScore, correct: nextCorrect, wrong: nextWrong, bestCombo: nextBest, words });
+        return;
+      }
+      setIndex(index + 1);
+    };
+    requestAnimationFrame(step);
+  };
+
+  const miss = (reason: string) => {
+    if (!round || lock.current || paused) return;
+    lock.current = true;
+    setLocked(true);
+    const nextWrong = wrong + 1;
+    const nextScore = Math.max(0, score - 45);
+    setWrong(nextWrong);
+    setScore(nextScore);
+    setCombo(0);
+    setPop("-45");
+    setNote(reason);
+    audio.sfx("bad");
+    juice.emit("bad");
+    advance(correct, nextWrong, nextScore, bestCombo, wordsRef.current);
+  };
+
+  const check = () => {
+    if (!round || lock.current || paused || placed.length !== round.bank.length) return;
+    const hit = placed.map((piece) => piece.id).join("|") === round.ids;
+    if (!hit) {
+      miss(`El orden era: ${round.answer}`);
+      return;
+    }
+    lock.current = true;
+    setLocked(true);
+    const nextCombo = combo + 1;
+    const nextBest = Math.max(bestCombo, nextCombo);
+    const gain = Math.round(72 * comboMultiplier(nextCombo));
+    const nextScore = score + gain;
+    const nextCorrect = correct + 1;
+    const words = [...wordsRef.current, round.word];
+    wordsRef.current = words;
+    setScore(nextScore);
+    setCombo(nextCombo);
+    setBestCombo(nextBest);
+    setCorrect(nextCorrect);
+    setPop(`+${gain}`);
+    setNote("La frase quedó en su sitio.");
+    audio.sfx(nextCombo >= 3 ? "combo" : "ok");
+    juice.emit("ok");
+    advance(nextCorrect, wrong, nextScore, nextBest, words);
+  };
+
+  useRailTimer({
+    total,
+    active: !paused && !locked && round !== undefined,
+    resetKey: `order-${index}`,
+    remainRef,
+    barRef,
+    labelRef,
+    onEnd: () => miss(round ? `Se acabó el tiempo. El orden era: ${round.answer}` : "Se acabó el tiempo."),
+  });
+
+  const take = (piece: ScrambleWord) => {
+    if (locked || paused) return;
+    setBank((current) => current.filter((item) => item.id !== piece.id));
+    setPlaced((current) => [...current, piece]);
+  };
+
+  const drop = (piece: ScrambleWord) => {
+    if (locked || paused) return;
+    setPlaced((current) => current.filter((item) => item.id !== piece.id));
+    setBank((current) => [...current, piece]);
+  };
+
+  if (!round) return null;
+
+  return (
+    <section className="enter relative mx-auto flex w-full max-w-xl flex-col gap-4">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <p className="text-xs tracking-widest text-gold uppercase">Petal Order</p>
+          <p className="text-sm text-muted">
+            {index + 1} / {rounds.length} · arma la frase en inglés
+          </p>
+        </div>
+        <p data-testid="score" className="font-display text-4xl">
+          {score}
+        </p>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-surface">
+        <div ref={barRef} className="timer-fill h-full w-full" />
+      </div>
+      <div className="flex justify-end text-sm text-muted">
+        <span ref={labelRef} data-testid="timer">
+          {Math.ceil(total)}
+        </span>
+      </div>
+      <div className="panel relative min-h-28 rounded-card p-4">
+        <PopScore text={pop} />
+        <p className="text-sm text-gold">Tu frase</p>
+        <div data-testid="phrase-built" className="mt-3 flex min-h-12 flex-wrap gap-2">
+          {placed.length === 0 ? <p className="text-sm text-muted">Toca las palabras de abajo, en orden.</p> : null}
+          {placed.map((piece) => (
+            <button
+              key={piece.id}
+              type="button"
+              onClick={() => drop(piece)}
+              className="min-h-12 rounded-card border border-gold bg-gold/15 px-3 py-2 text-base font-semibold text-fg"
+            >
+              {piece.text}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div data-testid="phrase-bank" className="flex flex-wrap gap-2">
+        {bank.map((piece) => (
+          <button
+            key={piece.id}
+            type="button"
+            onClick={() => take(piece)}
+            className="min-h-12 rounded-card border border-line bg-bg/75 px-3 py-2 text-base font-semibold text-fg transition-transform duration-150 active:scale-[0.96] hover:border-gold"
+          >
+            {piece.text}
+          </button>
+        ))}
+      </div>
+      <GameButton data-testid="phrase-check" disabled={locked || paused || placed.length !== round.bank.length} onClick={check}>
+        Comprobar
+      </GameButton>
+      <p className="min-h-6 text-sm text-muted" aria-live="polite">
+        {note}
+      </p>
+    </section>
+  );
+}
+
 export type ClassConfig = {
   teams: string[];
   questions: number;
@@ -911,6 +1116,8 @@ export function ClassPlay({
   onSettle,
   onAgain,
   onSetup,
+  showComplete = false,
+  onComplete,
 }: {
   deck: VocabItem[];
   config: ClassConfig;
@@ -918,6 +1125,8 @@ export function ClassPlay({
   onSettle: (stats: RunStats) => void;
   onAgain: () => void;
   onSetup: () => void;
+  showComplete?: boolean;
+  onComplete?: () => void;
 }) {
   const [teams, setTeams] = useState(() => config.teams.map((name) => ({ name, score: 0, combo: 0 })));
   const [turn, setTurn] = useState(0);
@@ -1060,6 +1269,11 @@ export function ClassPlay({
         </div>
         <div className="flex w-full max-w-md flex-col gap-2">
           <GameButton onClick={onAgain}>Otra ronda</GameButton>
+          {showComplete ? (
+            <GameButton variant="ghost" onClick={onComplete}>
+              Ver el cierre del jardín
+            </GameButton>
+          ) : null}
           <GameButton variant="quiet" onClick={onSetup}>
             Cambiar equipos
           </GameButton>

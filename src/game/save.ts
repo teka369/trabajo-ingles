@@ -1,5 +1,6 @@
-import { defaultDeck } from "./engine.ts";
-import type { Pos, SaveData, VocabItem } from "./types";
+import { GARDEN_COMPLETE_XP } from "./content.ts";
+import { defaultDeck, emptyCareer } from "./engine.ts";
+import type { Career, Pos, SaveData, VocabItem } from "./types";
 
 const KEY = "bloom-rush-v1";
 const SESSION_KEY = "bloom-rush-session";
@@ -22,6 +23,29 @@ function isItem(value: unknown): value is VocabItem {
   );
 }
 
+function readCount(value: unknown) {
+  return typeof value === "number" && value >= 0 && Number.isFinite(value) ? Math.floor(value) : 0;
+}
+
+function readCareer(value: unknown, xp: number): Career {
+  const base = emptyCareer();
+  if (!value || typeof value !== "object") {
+    if (xp >= GARDEN_COMPLETE_XP) base.finishedAt = Date.now();
+    return base;
+  }
+  const career = value as Partial<Career>;
+  const next: Career = {
+    startedAt: typeof career.startedAt === "number" ? career.startedAt : null,
+    finishedAt: typeof career.finishedAt === "number" ? career.finishedAt : null,
+    correct: readCount(career.correct),
+    wrong: readCount(career.wrong),
+    runs: readCount(career.runs),
+    bestCombo: readCount(career.bestCombo),
+  };
+  if (xp >= GARDEN_COMPLETE_XP && next.finishedAt == null) next.finishedAt = Date.now();
+  return next;
+}
+
 export function emptySave(): SaveData {
   return {
     version: 1,
@@ -31,6 +55,7 @@ export function emptySave(): SaveData {
     mastered: [],
     muted: false,
     deck: defaultDeck(),
+    career: emptyCareer(),
   };
 }
 
@@ -43,14 +68,16 @@ export function loadSave(): SaveData {
     const parsed = JSON.parse(raw) as Partial<SaveData>;
     if (parsed.version !== 1) return base;
     const deck = Array.isArray(parsed.deck) ? parsed.deck.filter(isItem).slice(0, 15) : [];
+    const xp = typeof parsed.xp === "number" && parsed.xp >= 0 ? parsed.xp : 0;
     return {
       version: 1,
-      xp: typeof parsed.xp === "number" && parsed.xp >= 0 ? parsed.xp : 0,
+      xp,
       best: typeof parsed.best === "number" && parsed.best >= 0 ? parsed.best : 0,
       badges: Array.isArray(parsed.badges) ? parsed.badges.filter((id) => typeof id === "string") : [],
       mastered: Array.isArray(parsed.mastered) ? parsed.mastered.filter((id) => typeof id === "string") : [],
       muted: Boolean(parsed.muted),
       deck: deck.length >= 8 ? deck : base.deck,
+      career: readCareer(parsed.career, xp),
     };
   } catch {
     return base;

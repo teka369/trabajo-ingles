@@ -12,7 +12,7 @@ export type VocabItem = {
   fromGarden: boolean;
 };
 
-export type ModeId = "dash" | "thorn" | "sentence" | "boss" | "class";
+export type ModeId = "dash" | "thorn" | "sentence" | "order" | "boss" | "class";
 
 export type RunStats = {
   mode: ModeId;
@@ -39,6 +39,15 @@ export type Question = {
   capitalize: boolean;
 };
 
+export type Career = {
+  startedAt: number | null;
+  finishedAt: number | null;
+  correct: number;
+  wrong: number;
+  runs: number;
+  bestCombo: number;
+};
+
 export type SaveData = {
   version: 1;
   xp: number;
@@ -47,6 +56,7 @@ export type SaveData = {
   mastered: string[];
   muted: boolean;
   deck: VocabItem[];
+  career: Career;
 };
 
 export type Badge = {

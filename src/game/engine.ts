@@ -1,6 +1,6 @@
-import { BADGES, DECOY_EN, DECOY_ES, DEFAULT_ORDER, LEVEL_STEPS, RICH } from "./content.ts";
+import { BADGES, DECOY_EN, DECOY_ES, DEFAULT_ORDER, GARDEN_COMPLETE_XP, LEVEL_STEPS, RICH } from "./content.ts";
 import { DICT, type DictEntry } from "./dictionary.ts";
-import type { Pos, Question, RunStats, SaveData, VocabItem } from "./types";
+import type { Career, Pos, Question, RunStats, SaveData, VocabItem } from "./types";
 
 const STOP = new Set(
   `a an the and or but if so because as of to in on at for from with by about into over after before between through during without within
@@ -329,7 +329,52 @@ export function xpForScore(score: number) {
   return Math.min(160, Math.max(4, Math.round(score / 26)));
 }
 
-export function settleRun(prev: SaveData, run: RunStats): { meta: SaveData; xpGain: number; newBadges: string[] } {
+export function emptyCareer(): Career {
+  return { startedAt: null, finishedAt: null, correct: 0, wrong: 0, runs: 0, bestCombo: 0 };
+}
+
+export function careerRank(career: Career) {
+  const total = career.correct + career.wrong;
+  const accuracy = total === 0 ? 0 : career.correct / total;
+  if (accuracy < 0.55) {
+    return { id: "basico" as const, title: "Básico", note: "Puedes mejorar. Todavía se escapan muchas palabras." };
+  }
+  if (accuracy < 0.75) {
+    return { id: "medio" as const, title: "Medio", note: "Vas bien, pero puedes afinar la precisión." };
+  }
+  if (accuracy < 0.9) {
+    return { id: "avanzado" as const, title: "Avanzado", note: "Estás bien. Ya respondes con seguridad." };
+  }
+  return { id: "experto" as const, title: "Experto", note: "Excelente. El vocabulario quedó dominado." };
+}
+
+export function formatJourney(startedAt: number | null, finishedAt: number | null) {
+  if (startedAt == null || finishedAt == null || finishedAt < startedAt) return "Sin registro";
+  const total = Math.max(0, Math.round((finishedAt - startedAt) / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  if (hours > 0) return `${hours} h ${minutes.toString().padStart(2, "0")} min`;
+  return `${minutes} min ${seconds.toString().padStart(2, "0")} s`;
+}
+
+export type ScrambleWord = { id: string; text: string };
+
+export function buildScramble(example: string) {
+  const words = example.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g) ?? [];
+  if (words.length < 4) return null;
+  const pieces: ScrambleWord[] = words.map((text, index) => ({ id: String(index), text }));
+  let bank = shuffle(pieces);
+  let guard = 0;
+  const straight = pieces.map((piece) => piece.id).join("|");
+  while (bank.map((piece) => piece.id).join("|") === straight && guard < 8) {
+    bank = shuffle(pieces);
+    guard += 1;
+  }
+  return { bank, pieces, answer: pieces.map((piece) => piece.text).join(" ") };
+}
+
+export function settleRun(prev: SaveData, run: RunStats): { meta: SaveData; xpGain: number; newBadges: string[]; justFinished: boolean } {
   const xpGain = xpForScore(run.score);
   const xp = prev.xp + xpGain;
   const mastered = [...prev.mastered];
@@ -351,15 +396,29 @@ export function settleRun(prev: SaveData, run: RunStats): { meta: SaveData; xpGa
   if (run.mode === "class" && run.win) grant("class-champ");
   if (mastered.length >= 10) grant("wordsmith");
   if (levelFromXp(xp).level >= 3) grant("level-3");
+  const now = Date.now();
+  const career: Career = { ...(prev.career ?? emptyCareer()) };
+  if (career.startedAt == null && career.finishedAt == null) career.startedAt = now;
+  career.correct += run.correct;
+  career.wrong += run.wrong;
+  career.runs += 1;
+  career.bestCombo = Math.max(career.bestCombo, run.bestCombo);
+  let justFinished = false;
+  if (career.finishedAt == null && xp >= GARDEN_COMPLETE_XP && prev.xp < GARDEN_COMPLETE_XP) {
+    career.finishedAt = now;
+    justFinished = true;
+  }
   return {
     xpGain,
     newBadges: fresh,
+    justFinished,
     meta: {
       ...prev,
       xp,
       best: Math.max(prev.best, run.score),
       badges: [...earned],
       mastered,
+      career,
     },
   };
 }

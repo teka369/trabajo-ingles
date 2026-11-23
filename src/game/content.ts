@@ -119,6 +119,7 @@ export const BADGES: Badge[] = [
 ];
 
 export const LEVEL_STEPS = [0, 100, 250, 450, 700, 1000, 1400, 1900, 2500, 3200];
+export const GARDEN_COMPLETE_XP = LEVEL_STEPS[LEVEL_STEPS.length - 1]!;
 
 export const DECOY_ES = [
   "lápiz",

@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { emptySave } from "./save.ts";
+import { GARDEN_COMPLETE_XP } from "./content.ts";
 import {
   answersMatch,
   buildClozeQuestion,
   buildMeaningQuestion,
+  buildScramble,
+  careerRank,
   deckReady,
   defaultDeck,
   extractWords,
+  formatJourney,
   levelFromXp,
   settleRun,
   tryAdd,
@@ -101,4 +105,36 @@ test("levels, deck limits and rewards", () => {
   const custom = tryAdd(removed, "river", "");
   assert.equal(custom.error, undefined);
   assert.equal(custom.items.at(-1)?.translation, "río");
+  assert.equal(settled.meta.career.runs, 1);
+  assert.equal(settled.justFinished, false);
+  assert.equal(settled.meta.career.correct, 8);
+});
+
+test("finishing the last level records the journey and a rank", () => {
+  const base = emptySave();
+  base.xp = GARDEN_COMPLETE_XP - 10;
+  base.career.startedAt = 1_000;
+  const settled = settleRun(base, {
+    mode: "order",
+    score: 400,
+    correct: 18,
+    wrong: 2,
+    bestCombo: 4,
+    win: true,
+    words: ["grow"],
+    title: "t",
+    detail: "d",
+  });
+  assert.equal(settled.justFinished, true);
+  assert.ok((settled.meta.career.finishedAt ?? 0) >= (settled.meta.career.startedAt ?? 0));
+  assert.equal(careerRank(settled.meta.career).title, "Experto");
+  assert.equal(careerRank({ ...settled.meta.career, correct: 6, wrong: 4 }).title, "Medio");
+  assert.equal(careerRank({ ...settled.meta.career, correct: 4, wrong: 6 }).title, "Básico");
+  assert.equal(careerRank({ ...settled.meta.career, correct: 8, wrong: 2 }).title, "Avanzado");
+  assert.equal(formatJourney(0, 90_000), "1 min 30 s");
+  assert.equal(formatJourney(null, 90_000), "Sin registro");
+  const scramble = buildScramble("Wild flowers line the stone path.");
+  assert.ok(scramble);
+  assert.equal(scramble?.pieces.length, 6);
+  assert.equal(scramble?.answer, "Wild flowers line the stone path");
 });

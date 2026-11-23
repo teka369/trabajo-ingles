@@ -15,20 +15,21 @@ import {
   Plus,
   Trash2,
   Keyboard,
+  Shuffle,
 } from "lucide-react";
 import { Garden } from "@/components/garden";
-import { BloomBoss, ClassPlay, ClassSetup, SentenceBuilder, ThornRecall, WordDash, type ClassConfig } from "@/components/modes";
+import { BloomBoss, ClassPlay, ClassSetup, PhraseOrder, SentenceBuilder, ThornRecall, WordDash, type ClassConfig } from "@/components/modes";
 import { GameButton, IconButton, Stat } from "@/components/ui";
 import { audio } from "@/game/audio";
 import { BADGES, FLOWERS } from "@/game/content";
 import { POS_ES } from "@/game/dictionary";
-import { badgeById, deckReady, defaultDeck, extractWords, levelFromXp, settleRun, tryAdd } from "@/game/engine";
+import { badgeById, careerRank, deckReady, defaultDeck, extractWords, formatJourney, levelFromXp, settleRun, tryAdd } from "@/game/engine";
 import { juice } from "@/game/juice";
 import { emptySave, loadSave, loadSessionBest, writeSave, writeSessionBest } from "@/game/save";
 import type { RunStats, SaveData, VocabItem } from "@/game/types";
 import { cn } from "@/lib/cn";
 
-type Screen = "title" | "vocab" | "hub" | "dash" | "thorn" | "sentence" | "boss" | "class-setup" | "class-play" | "results";
+type Screen = "title" | "vocab" | "hub" | "dash" | "thorn" | "sentence" | "order" | "boss" | "class-setup" | "class-play" | "results" | "finale";
 
 type ResultView = {
   stats: RunStats;
@@ -38,7 +39,7 @@ type ResultView = {
   levelAfter: number;
 };
 
-const RUNS = new Set<Screen>(["dash", "thorn", "sentence", "boss", "class-play"]);
+const RUNS = new Set<Screen>(["dash", "thorn", "sentence", "order", "boss", "class-play"]);
 
 export function BloomRush() {
   const [hydrated, setHydrated] = useState(false);
@@ -122,7 +123,7 @@ export function BloomRush() {
       levelAfter: levelFromXp(settled.meta.xp).level,
     });
     setPaused(false);
-    setScreen("results");
+    setScreen(settled.justFinished ? "finale" : "results");
     audio.sfx(stats.win ? "win" : "bloom");
     if (stats.win) juice.emit("win");
   };
@@ -150,7 +151,7 @@ export function BloomRush() {
       setPaused(true);
       return;
     }
-    if (screen === "results" || screen === "class-setup") setScreen("hub");
+    if (screen === "results" || screen === "class-setup" || screen === "finale") setScreen("hub");
     else setScreen("title");
   };
 
@@ -218,6 +219,7 @@ export function BloomRush() {
                 }
                 go("class-setup");
               }}
+              onFinale={() => go("finale")}
             />
           ) : screen === "dash" ? (
             <WordDash key={runId} deck={progress.deck} paused={paused} onFinish={finish} />
@@ -225,6 +227,8 @@ export function BloomRush() {
             <ThornRecall key={runId} deck={progress.deck} paused={paused} onFinish={finish} />
           ) : screen === "sentence" ? (
             <SentenceBuilder key={runId} deck={progress.deck} paused={paused} onFinish={finish} />
+          ) : screen === "order" ? (
+            <PhraseOrder key={runId} deck={progress.deck} paused={paused} onFinish={finish} />
           ) : screen === "boss" ? (
             <BloomBoss key={runId} deck={progress.deck} paused={paused} onFinish={finish} />
           ) : screen === "class-setup" ? (
@@ -241,10 +245,14 @@ export function BloomRush() {
               deck={progress.deck}
               config={classConfig}
               paused={paused}
+              showComplete={progress.career.finishedAt != null}
+              onComplete={() => go("finale")}
               onSettle={settleQuiet}
               onAgain={() => setClassKey((value) => value + 1)}
               onSetup={() => setScreen("class-setup")}
             />
+          ) : screen === "finale" ? (
+            <Finale progress={progress} xpGain={result?.xpGain ?? 0} onHub={() => go("hub")} />
           ) : screen === "results" && result ? (
             <Results
               result={result}
@@ -498,20 +506,24 @@ function HubScreen({
   onMode,
   onVocab,
   onClass,
+  onFinale,
 }: {
   level: ReturnType<typeof levelFromXp>;
   badges: string[];
   mastered: number;
   best: number;
   sessionBest: number;
-  onMode: (mode: "dash" | "thorn" | "sentence" | "boss") => void;
+  onMode: (mode: "dash" | "thorn" | "sentence" | "order" | "boss") => void;
   onVocab: () => void;
   onClass: () => void;
+  onFinale: () => void;
 }) {
+  const done = level.level >= 10;
   const modes = [
     { id: "dash" as const, title: "Word Dash", text: "Cuatro opciones, inglés y español, 30 segundos.", icon: Timer, test: "mode-dash" },
     { id: "thorn" as const, title: "Thorn Recall", text: "Escribe la traducción. Sin opciones y con tres vidas.", icon: Keyboard, test: "mode-thorn" },
     { id: "sentence" as const, title: "Sentence Builder", text: "Un intento por oración y el reloj no perdona.", icon: Quote, test: "mode-sentence" },
+    { id: "order" as const, title: "Petal Order", text: "Arma la frase en inglés. Las palabras llegan sueltas.", icon: Shuffle, test: "mode-order" },
     { id: "boss" as const, title: "The Bloom Boss", text: "Menos daño por golpe. Hay que encadenar aciertos.", icon: Swords, test: "mode-boss" },
   ];
   return (
@@ -529,13 +541,11 @@ function HubScreen({
       </div>
       <div className="panel rounded-card p-4">
         <div className="mb-2 flex items-center justify-between text-sm">
-          <span>Nivel {level.level}</span>
-          <span className="text-muted">
-            {level.into} / {level.span} XP
-          </span>
+          <span>Nivel {level.level}{done ? " · completo" : ""}</span>
+          <span className="text-muted">{done ? "Jardín cerrado" : `${level.into} / ${level.span} XP`}</span>
         </div>
         <div className="h-2 overflow-hidden rounded-full bg-surface">
-          <div className="h-full bg-gold" style={{ width: `${Math.min(100, (level.into / level.span) * 100)}%` }} />
+          <div className="h-full bg-gold" style={{ width: `${done ? 100 : Math.min(100, (level.into / level.span) * 100)}%` }} />
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           {FLOWERS.map((name, index) => {
@@ -555,6 +565,12 @@ function HubScreen({
           })}
         </div>
       </div>
+      {done ? (
+        <GameButton data-testid="finale-open" onClick={onFinale}>
+          <Trophy className="size-4" aria-hidden="true" />
+          Ver el cierre del jardín
+        </GameButton>
+      ) : null}
       <div className="grid gap-3 sm:grid-cols-2">
         {modes.map((mode) => (
           <button
@@ -593,6 +609,51 @@ function HubScreen({
           );
         })}
       </div>
+    </section>
+  );
+}
+
+function Finale({ progress, xpGain, onHub }: { progress: SaveData; xpGain: number; onHub: () => void }) {
+  const career = progress.career;
+  const answered = career.correct + career.wrong;
+  const accuracy = answered === 0 ? 0 : Math.round((career.correct / answered) * 100);
+  const rank = careerRank(career);
+  const journey = formatJourney(career.startedAt, career.finishedAt);
+  return (
+    <section className="enter mx-auto flex w-full max-w-xl flex-col items-center gap-4 pb-10 text-center">
+      <Trophy className="size-10 text-gold" aria-hidden="true" />
+      <p className="text-xs tracking-widest text-gold uppercase">Jardín completo</p>
+      <h2 className="font-display text-4xl sm:text-5xl">Completaste los 10 niveles</h2>
+      <p className="max-w-md text-muted">Las ocho flores quedaron abiertas. Esto es lo que hiciste para llegar hasta aquí.</p>
+      <div className="panel w-full rounded-card p-4">
+        <p className="text-xs tracking-widest text-muted uppercase">Tu rango</p>
+        <p className="font-display text-4xl text-gold">{rank.title}</p>
+        <p className="mt-2 text-sm">{rank.note}</p>
+      </div>
+      <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3">
+        <Stat label="Aciertos" value={career.correct} />
+        <Stat label="Fallos" value={career.wrong} />
+        <Stat label="Precisión" value={`${accuracy}%`} />
+        <Stat label="Partidas" value={career.runs} />
+        <Stat label="Mejor racha" value={career.bestCombo} />
+        <Stat label="Mejor puntaje" value={progress.best} />
+      </div>
+      <div>
+        <p className="text-xs tracking-widest text-muted uppercase">Tiempo hasta el nivel 10</p>
+        <p className="font-display text-3xl">{journey}</p>
+        <p className="mt-1 text-xs text-muted">
+          {journey === "Sin registro"
+            ? "Ese tiempo no quedó guardado en partidas anteriores."
+            : "Cuenta desde la primera partida hasta la que cerró el jardín."}
+        </p>
+      </div>
+      <p className="text-sm text-muted">
+        Nivel {levelFromXp(progress.xp).level} · {progress.xp} XP
+        {xpGain > 0 ? ` · esta partida +${xpGain}` : ""}
+      </p>
+      <GameButton className="w-full max-w-md" onClick={onHub}>
+        Volver al jardín
+      </GameButton>
     </section>
   );
 }
